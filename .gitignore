@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+.home/
+.module-cache/
+.swiftpm-cache/
+dist/
+real-dry-run/
+Assets/Icon/AppIcon-chroma.png
+*.swp
+*.xcuserstate
