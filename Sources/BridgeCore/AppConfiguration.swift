@@ -39,10 +39,8 @@ public struct AppConfiguration: Codable, Sendable, Equatable {
             throw BridgeError.invalidConfiguration("至少需要一个 VPN DNS / 探测 IP")
         }
 
-        let normalizedDomains = try unique(internalDomains.map(normalizeDomain))
-        guard !normalizedDomains.isEmpty else {
-            throw BridgeError.invalidConfiguration("至少需要一个内网域名后缀")
-        }
+        let nonemptyDomains = internalDomains.map(normalizeScalar).filter { !$0.isEmpty }
+        let normalizedDomains = try unique(nonemptyDomains.map(normalizeDomain))
 
         let expandedPath = NSString(string: normalizeScalar(clashConfigDirectory)).expandingTildeInPath
         var isDirectory: ObjCBool = false

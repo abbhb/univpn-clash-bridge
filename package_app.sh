@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="${0:A:h}"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.0.1}"
+BUILD_NUMBER="${BUILD_NUMBER:-2}"
 APP="$ROOT/dist/UniVPN Clash Bridge.app"
 ZIP="$ROOT/dist/UniVPN-Clash-Bridge-$VERSION-macos-arm64.zip"
 MODULE_CACHE="$ROOT/.module-cache"
@@ -43,6 +44,7 @@ sips -z 1024 1024 "$ICON_SOURCE" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
 "$ROOT/.build/release/IconPackager" "$ICONSET" "$APP/Contents/Resources/AppIcon.icns"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP/Contents/Info.plist"
 xattr -cr "$APP"
 codesign --force --sign - "$APP/Contents/Resources/univpn-dns-guard"
 codesign --force --deep --sign - "$APP"

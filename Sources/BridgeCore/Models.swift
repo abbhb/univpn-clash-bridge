@@ -22,11 +22,18 @@ public struct UpdateOutcome: Sendable, Equatable {
     public let interface: InterfaceDetection
     public let backupDirectory: String
     public let runtimeReloaded: Bool
+    public let changedFileCount: Int
 
-    public init(interface: InterfaceDetection, backupDirectory: String, runtimeReloaded: Bool) {
+    public init(
+        interface: InterfaceDetection,
+        backupDirectory: String,
+        runtimeReloaded: Bool,
+        changedFileCount: Int
+    ) {
         self.interface = interface
         self.backupDirectory = backupDirectory
         self.runtimeReloaded = runtimeReloaded
+        self.changedFileCount = changedFileCount
     }
 }
 

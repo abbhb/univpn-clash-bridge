@@ -173,9 +173,13 @@ final class AppModel: ObservableObject {
                     ? "无可见 IP 地址"
                     : outcome.interface.addresses.joined(separator: ", ")
                 statusKind = .success
-                statusMessage = outcome.runtimeReloaded
-                    ? "全局配置已更新，Mihomo 已热重载"
-                    : "全局配置已更新；Clash Verge 启动后自动生效"
+                if outcome.changedFileCount == 0 {
+                    statusMessage = "VPN 出口配置已是最新"
+                } else {
+                    statusMessage = outcome.runtimeReloaded
+                        ? "全局配置已更新，Mihomo 已热重载"
+                        : "全局配置已更新；Clash Verge 启动后自动生效"
+                }
             } else {
                 statusKind = .failure
                 statusMessage = result.errorMessage ?? "更新失败"
@@ -310,7 +314,7 @@ private struct DashboardView: View {
                     }
                     GridRow {
                         Text("分流范围").foregroundStyle(.secondary)
-                        Text("\(model.configuration?.internalDomains.count ?? 0) 个域名后缀")
+                        Text(routingScope)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -372,6 +376,11 @@ private struct DashboardView: View {
         .padding(22)
         .frame(width: 560, height: 430)
     }
+
+    private var routingScope: String {
+        let count = model.configuration?.internalDomains.count ?? 0
+        return count == 0 ? "仅维护 VPN 出口" : "\(count) 个域名后缀"
+    }
 }
 
 private struct ConfigurationEditor: View {
@@ -409,20 +418,20 @@ private struct ConfigurationEditor: View {
                     .padding(5)
                     .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                Text("每行一个地址，用于识别 VPN 接口和转发内网 DNS。")
+                Text("每行一个地址；用于识别 VPN 接口，托管域名时也用于内网 DNS。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("内网域名后缀").font(.headline)
+                Text("内网域名后缀（可选）").font(.headline)
                 TextEditor(text: $draft.domainsText)
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 92)
                     .padding(5)
                     .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                Text("每行一个域名；无需填写 +. 或 *. 前缀。")
+                Text("留空时不修改 Clash 的域名规则和 DNS 分流。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -475,7 +484,6 @@ private struct ConfigurationEditor: View {
                 .disabled(
                     model.isBusy
                         || draft.dnsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || draft.domainsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || draft.clashDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
                 .keyboardShortcut(.defaultAction)

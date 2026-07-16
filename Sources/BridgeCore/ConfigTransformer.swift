@@ -35,9 +35,6 @@ public enum ConfigTransformer {
             throw BridgeError.unsupportedConfig("全局脚本没有 main 函数")
         }
 
-        guard !internalDomains.isEmpty else {
-            throw BridgeError.invalidConfiguration("内网域名列表为空")
-        }
         let domainJSON = try jsonString(internalDomains)
         let block = """
         \(scriptBegin)
@@ -60,17 +57,19 @@ public enum ConfigTransformer {
             return !proxy || proxy.name !== __univpnBridgeProxyName;
           }));
 
-          const oldRules = Array.isArray(config.rules) ? config.rules : [];
-          const keptRules = oldRules.filter(function(rule) {
-            if (typeof rule !== "string") return true;
-            return !__univpnBridgeDomains.some(function(domain) {
-              return rule.indexOf("DOMAIN-SUFFIX," + domain + ",") === 0;
+          if (__univpnBridgeDomains.length > 0) {
+            const oldRules = Array.isArray(config.rules) ? config.rules : [];
+            const keptRules = oldRules.filter(function(rule) {
+              if (typeof rule !== "string") return true;
+              return !__univpnBridgeDomains.some(function(domain) {
+                return rule.indexOf("DOMAIN-SUFFIX," + domain + ",") === 0;
+              });
             });
-          });
-          const managedRules = __univpnBridgeDomains.map(function(domain) {
-            return "DOMAIN-SUFFIX," + domain + "," + __univpnBridgeProxyName;
-          });
-          config.rules = managedRules.concat(keptRules);
+            const managedRules = __univpnBridgeDomains.map(function(domain) {
+              return "DOMAIN-SUFFIX," + domain + "," + __univpnBridgeProxyName;
+            });
+            config.rules = managedRules.concat(keptRules);
+          }
 
           return config;
         };
@@ -85,6 +84,8 @@ public enum ConfigTransformer {
         dnsServers: [String],
         internalDomains: [String]
     ) throws -> String {
+        guard !internalDomains.isEmpty else { return source }
+
         var lines = source.components(separatedBy: "\n")
         removeCompanyServersFromGeneralNameservers(&lines, dnsServers: dnsServers)
         try upsertInternalDNSPolicy(&lines, dnsServers: dnsServers, internalDomains: internalDomains)
@@ -263,6 +264,8 @@ public enum ConfigTransformer {
     }
 
     private static func upsertInternalRules(_ source: String, internalDomains: [String]) throws -> String {
+        guard !internalDomains.isEmpty else { return source }
+
         var lines = source.components(separatedBy: "\n")
         guard let start = lines.firstIndex(where: {
             indentation(of: $0) == 0 && $0.trimmingCharacters(in: .whitespaces) == "rules:"

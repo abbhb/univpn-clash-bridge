@@ -34,7 +34,11 @@ public struct BridgePaths: Sendable {
             mihomoSocket: URL(fileURLWithPath: "/tmp/verge/verge-mihomo.sock")
         )
 
-        for file in [paths.globalScript, paths.dnsConfig, paths.runtimeConfig] {
+        var requiredFiles = [paths.globalScript, paths.runtimeConfig]
+        if !configuration.internalDomains.isEmpty {
+            requiredFiles.append(paths.dnsConfig)
+        }
+        for file in requiredFiles {
             guard fileManager.fileExists(atPath: file.path) else {
                 throw BridgeError.requiredFileMissing(file.path)
             }
@@ -61,17 +65,11 @@ public struct BridgeService {
         let detected = try detect()
 
         let originalScript = try String(contentsOf: paths.globalScript, encoding: .utf8)
-        let originalDNS = try String(contentsOf: paths.dnsConfig, encoding: .utf8)
         let originalRuntime = try String(contentsOf: paths.runtimeConfig, encoding: .utf8)
 
         let updatedScript = try ConfigTransformer.updateGlobalScript(
             originalScript,
             interface: detected.name,
-            internalDomains: configuration.internalDomains
-        )
-        let updatedDNS = try ConfigTransformer.updateDNSConfig(
-            originalDNS,
-            dnsServers: configuration.dnsServers,
             internalDomains: configuration.internalDomains
         )
         let updatedRuntime = try ConfigTransformer.updateRuntimeConfig(
@@ -80,15 +78,33 @@ public struct BridgeService {
             dnsServers: configuration.dnsServers,
             internalDomains: configuration.internalDomains
         )
-        let backupDirectory = try createBackup(paths: paths, appData: appData)
+        var updates = [
+            FileUpdate(url: paths.globalScript, original: originalScript, updated: updatedScript),
+        ]
+        if !configuration.internalDomains.isEmpty {
+            let originalDNS = try String(contentsOf: paths.dnsConfig, encoding: .utf8)
+            let updatedDNS = try ConfigTransformer.updateDNSConfig(
+                originalDNS,
+                dnsServers: configuration.dnsServers,
+                internalDomains: configuration.internalDomains
+            )
+            updates.append(FileUpdate(url: paths.dnsConfig, original: originalDNS, updated: updatedDNS))
+        }
+        updates.append(FileUpdate(url: paths.runtimeConfig, original: originalRuntime, updated: updatedRuntime))
+
+        let changedUpdates = updates.filter(\.hasChanges)
+        let backupDirectory = changedUpdates.isEmpty
+            ? appData.backups
+            : try createBackup(sources: changedUpdates.map(\.url), appData: appData)
 
         do {
-            try atomicWrite(updatedScript, to: paths.globalScript)
-            try atomicWrite(updatedDNS, to: paths.dnsConfig)
-            try atomicWrite(updatedRuntime, to: paths.runtimeConfig)
+            for update in changedUpdates {
+                try atomicWrite(update.updated, to: update.url)
+            }
             try validate(runtimeConfig: paths.runtimeConfig, paths: paths)
 
-            let reloaded = fileManager.fileExists(atPath: paths.mihomoSocket.path)
+            let runtimeChanged = changedUpdates.contains { $0.url == paths.runtimeConfig }
+            let reloaded = runtimeChanged && fileManager.fileExists(atPath: paths.mihomoSocket.path)
             if reloaded {
                 try reload(runtimeConfig: paths.runtimeConfig, socket: paths.mihomoSocket)
             }
@@ -96,20 +112,22 @@ public struct BridgeService {
             return UpdateOutcome(
                 interface: detected,
                 backupDirectory: backupDirectory.path,
-                runtimeReloaded: reloaded
+                runtimeReloaded: reloaded,
+                changedFileCount: changedUpdates.count
             )
         } catch {
-            try? atomicWrite(originalScript, to: paths.globalScript)
-            try? atomicWrite(originalDNS, to: paths.dnsConfig)
-            try? atomicWrite(originalRuntime, to: paths.runtimeConfig)
-            if fileManager.fileExists(atPath: paths.mihomoSocket.path) {
+            for update in changedUpdates {
+                try? atomicWrite(update.original, to: update.url)
+            }
+            let runtimeChanged = changedUpdates.contains { $0.url == paths.runtimeConfig }
+            if runtimeChanged, fileManager.fileExists(atPath: paths.mihomoSocket.path) {
                 try? reload(runtimeConfig: paths.runtimeConfig, socket: paths.mihomoSocket)
             }
             throw error
         }
     }
 
-    private func createBackup(paths: BridgePaths, appData: AppDataPaths) throws -> URL {
+    private func createBackup(sources: [URL], appData: AppDataPaths) throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
@@ -117,7 +135,7 @@ public struct BridgeService {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
 
-        for source in [paths.globalScript, paths.dnsConfig, paths.runtimeConfig] {
+        for source in sources {
             let destination = directory.appendingPathComponent(source.lastPathComponent)
             try fileManager.copyItem(at: source, to: destination)
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
@@ -196,4 +214,12 @@ public struct BridgeService {
         if trimmed.count <= 500 { return trimmed }
         return String(trimmed.prefix(500)) + "..."
     }
+}
+
+private struct FileUpdate {
+    let url: URL
+    let original: String
+    let updated: String
+
+    var hasChanges: Bool { original != updated }
 }

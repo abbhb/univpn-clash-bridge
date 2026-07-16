@@ -54,6 +54,17 @@ do {
     try expect(!secondScript.contains("const __univpnBridgeInterface = \"utun5\";"), "stale script interface")
     try expect(secondScript.contains("corp.example.com"), "configured domain injection")
 
+    let interfaceOnlyScript = try ConfigTransformer.updateGlobalScript(
+        script,
+        interface: "utun9",
+        internalDomains: []
+    )
+    try expect(interfaceOnlyScript.contains("const __univpnBridgeDomains = [];"), "empty domain declaration")
+    try expect(
+        interfaceOnlyScript.contains("if (__univpnBridgeDomains.length > 0)"),
+        "optional rule management guard"
+    )
+
     let dns = """
     dns:
       nameserver:
@@ -75,6 +86,12 @@ do {
     try expect(updatedDNS.contains("'udp://192.0.2.53#UNIVPN-DIRECT'"), "policy proxy reference")
     try expect(updatedDNS.contains("+.public.example:"), "unmanaged policy preservation")
     try expect(updatedDNS.contains("- 203.0.113.53"), "unmanaged policy value preservation")
+    let untouchedDNS = try ConfigTransformer.updateDNSConfig(
+        dns,
+        dnsServers: exampleDNS,
+        internalDomains: []
+    )
+    try expect(untouchedDNS == dns, "interface-only DNS preservation")
 
     let runtime = """
     dns:
@@ -117,13 +134,33 @@ do {
     )
     try expect(secondRuntime.contains("- MATCH,node"), "unmanaged rule preservation")
 
+    let interfaceOnlyRuntime = try ConfigTransformer.updateRuntimeConfig(
+        runtime,
+        interface: "utun9",
+        dnsServers: exampleDNS,
+        internalDomains: []
+    )
+    try expect(interfaceOnlyRuntime.contains("interface-name: utun9"), "interface-only direct proxy")
+    try expect(
+        interfaceOnlyRuntime.contains("- DOMAIN-SUFFIX,corp.example.com,DIRECT"),
+        "interface-only rule preservation"
+    )
+    try expect(!interfaceOnlyRuntime.contains("udp://"), "interface-only DNS preservation")
+
     let normalized = try AppConfiguration(
         dnsServers: exampleDNS,
-        internalDomains: ["+.corp.example.com", "*.internal.example"],
+        internalDomains: ["+.corp.example.com", "CORP.EXAMPLE.COM", "*.internal.example"],
         clashConfigDirectory: "/private/tmp",
         dnsGuardEnabled: true
     ).normalized()
     try expect(normalized.internalDomains == exampleDomains, "configuration normalization")
+    let interfaceOnlyConfiguration = try AppConfiguration(
+        dnsServers: exampleDNS,
+        internalDomains: ["", "  "],
+        clashConfigDirectory: "/private/tmp",
+        dnsGuardEnabled: true
+    ).normalized()
+    try expect(interfaceOnlyConfiguration.internalDomains.isEmpty, "optional domain configuration")
 
     if CommandLine.arguments.count == 6, CommandLine.arguments[1] == "--transform-real" {
         let sourceDirectory = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
