@@ -178,6 +178,56 @@ public enum ConfigTransformer {
         return base
     }
 
+    /// Applies the same reachability snapshot to saved DNS and runtime YAML.
+    public static func synchronizeDNSPolicy(
+        _ source: String, servers: [String], domains: [String], outbound: String
+    ) throws -> String {
+        var lines = source.components(separatedBy: "\n")
+        try upsertInternalDNSPolicy(&lines, dnsServers: servers,
+            internalDNSDomains: domains, outboundName: outbound, enabled: !servers.isEmpty)
+        return lines.joined(separator: "\n")
+    }
+
+    /// Runs after the user's main function, preventing it from restoring stale DNS policies.
+    public static func synchronizeDNSScript(
+        _ source: String, servers: [String], domains: [String], outbound: String
+    ) throws -> String {
+        let begin = "// UNIVPN_DNS_REACHABILITY_BEGIN"
+        let end = "// UNIVPN_DNS_REACHABILITY_END"
+        var base = source
+        if let b = base.range(of: begin), let e = base.range(of: end), b.lowerBound < e.lowerBound {
+            base.removeSubrange(b.lowerBound..<e.upperBound)
+        } else if base.contains(begin) || base.contains(end) {
+            throw BridgeError.unsupportedConfig("DNS 探测脚本标记不完整")
+        }
+        // The wrapper must follow both the user script and the VPN wrapper.
+        guard base.range(of: #"\bfunction\s+main\s*\(|\bmain\s*="#,
+                         options: .regularExpression) != nil else {
+            throw BridgeError.unsupportedConfig("全局脚本没有 main 函数")
+        }
+        let resolvers = servers.map { "udp://" + ($0.contains(":") ? "[" + $0 + "]" : $0) + "#" + outbound }
+        return base.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + """
+        \(begin)
+        const __univpnDNSOriginalMain = main;
+        main = function(config, profileName) {
+          config = __univpnDNSOriginalMain(config, profileName) || config;
+          const domains = \(try jsonString(domains));
+          const servers = \(try jsonString(resolvers));
+          if (domains.length) {
+            config.dns = config.dns || {};
+            const policy = config.dns["nameserver-policy"] || {};
+            domains.forEach(function(domain) {
+              delete policy["+." + domain];
+              if (servers.length) policy["+." + domain] = servers.slice();
+            });
+            config.dns["nameserver-policy"] = policy;
+          }
+          return config;
+        };
+        \(end)
+        """ + "\n"
+    }
+
     public static func updateDNSConfig(
         _ source: String,
         dnsServers: [String],
@@ -283,9 +333,10 @@ public enum ConfigTransformer {
         _ lines: inout [String],
         dnsServers: [String],
         internalDNSDomains: [String],
-        outboundName: String
+        outboundName: String,
+        enabled: Bool = true
     ) throws {
-        guard !dnsServers.isEmpty else {
+        guard !enabled || !dnsServers.isEmpty else {
             throw BridgeError.invalidConfiguration("DNS 列表为空")
         }
         try removeManagedDNSPolicyBlock(&lines)
@@ -325,7 +376,7 @@ public enum ConfigTransformer {
                 end -= blockEnd - index
             }
 
-            if !internalDNSDomains.isEmpty {
+            if enabled && !internalDNSDomains.isEmpty {
                 lines.insert(
                     contentsOf: managedPolicyLines(
                         baseIndent: baseIndent,
@@ -339,7 +390,7 @@ public enum ConfigTransformer {
             return
         }
 
-        guard !internalDNSDomains.isEmpty else { return }
+        guard enabled && !internalDNSDomains.isEmpty else { return }
 
         guard let dnsStart = lines.firstIndex(where: {
             indentation(of: $0) == 0 && $0.trimmingCharacters(in: .whitespaces) == "dns:"

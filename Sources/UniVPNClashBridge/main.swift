@@ -196,6 +196,9 @@ final class AppModel: ObservableObject {
                             : "已恢复 DIRECT 配置；Clash Verge 启动后自动生效"
                     }
                 }
+                statusMessage += outcome.availableDNSServers.isEmpty
+                    ? "；内网 DNS 不可用，已使用公网解析"
+                    : "；内网 DNS：" + outcome.availableDNSServers.joined(separator: ", ")
             } else {
                 statusKind = .failure
                 statusMessage = result.errorMessage ?? "更新失败"

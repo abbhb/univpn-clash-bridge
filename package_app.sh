@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="${0:A:h}"
-VERSION="${VERSION:-1.0.4}"
-BUILD_NUMBER="${BUILD_NUMBER:-5}"
+VERSION="${VERSION:-1.0.5}"
+BUILD_NUMBER="${BUILD_NUMBER:-6}"
 APP="$ROOT/dist/UniVPN Clash Bridge.app"
 ZIP="$ROOT/dist/UniVPN-Clash-Bridge-$VERSION-macos-arm64.zip"
 MODULE_CACHE="$ROOT/.module-cache"

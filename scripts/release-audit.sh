@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-VERSION="${VERSION:-1.0.4}"
+VERSION="${VERSION:-1.0.5}"
 ARCHIVE="${1:-$ROOT/dist/UniVPN-Clash-Bridge-$VERSION-macos-arm64.zip}"
 CHECKSUM="$ARCHIVE.sha256"
 EXTRA_PATTERN_FILE="${PRIVACY_AUDIT_EXTRA_PATTERN_FILE:-}"

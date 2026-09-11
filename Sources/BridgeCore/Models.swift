@@ -24,6 +24,7 @@ public enum BridgeMode: Sendable, Equatable {
 }
 
 public struct UpdateOutcome: Sendable, Equatable {
+    public let availableDNSServers: [String]
     public let mode: BridgeMode
     public let interface: InterfaceDetection?
     public let backupDirectory: String
@@ -32,11 +33,13 @@ public struct UpdateOutcome: Sendable, Equatable {
 
     public init(
         mode: BridgeMode,
+        availableDNSServers: [String] = [],
         interface: InterfaceDetection?,
         backupDirectory: String,
         runtimeReloaded: Bool,
         changedFileCount: Int
     ) {
+        self.availableDNSServers = availableDNSServers
         self.mode = mode
         self.interface = interface
         self.backupDirectory = backupDirectory

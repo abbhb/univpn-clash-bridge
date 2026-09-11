@@ -73,9 +73,9 @@ public struct BridgeService {
         let vpnRouteDomains = configuration.vpnRouteDomains
 
         let mode: BridgeMode = detected == nil ? .direct : .vpn
-        let updatedScript: String
-        let updatedDNS: String
-        let updatedRuntime: String
+        var updatedScript: String
+        var updatedDNS: String
+        var updatedRuntime: String
         if let detected {
             updatedScript = try ConfigTransformer.updateGlobalScript(
                 originalScript,
@@ -113,6 +113,14 @@ public struct BridgeService {
                 previousVPNRouteDomains: previousVPNRouteDomains
             )
         }
+        let availableDNS = try DNSReachabilityProbe().availableServers(configuration.dnsServers)
+        let dnsOutbound = detected == nil ? "DIRECT" : BridgeConstants.proxyName
+        updatedScript = try ConfigTransformer.synchronizeDNSScript(
+            updatedScript, servers: availableDNS, domains: internalDNSDomains, outbound: dnsOutbound)
+        updatedDNS = try ConfigTransformer.synchronizeDNSPolicy(
+            updatedDNS, servers: availableDNS, domains: internalDNSDomains, outbound: dnsOutbound)
+        updatedRuntime = try ConfigTransformer.synchronizeDNSPolicy(
+            updatedRuntime, servers: availableDNS, domains: internalDNSDomains, outbound: dnsOutbound)
         var updates = [
             FileUpdate(url: paths.globalScript, original: originalScript, updated: updatedScript),
             FileUpdate(url: paths.dnsConfig, original: originalDNS, updated: updatedDNS),
@@ -138,6 +146,7 @@ public struct BridgeService {
 
             return UpdateOutcome(
                 mode: mode,
+                availableDNSServers: availableDNS,
                 interface: detected,
                 backupDirectory: backupDirectory.path,
                 runtimeReloaded: reloaded,
