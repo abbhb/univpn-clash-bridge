@@ -760,6 +760,10 @@ do {
             try transformed.write(to: directory.appendingPathComponent("Script.js"), atomically: true, encoding: .utf8)
         }
     }
+    try expect(DNSReachabilityProbe.hasICMPResponse(exitCode: 0,
+        output: "1 packets transmitted, 1 packets received, 0.0% packet loss"), "System-route ICMP reachability accepted")
+    try expect(!DNSReachabilityProbe.hasICMPResponse(exitCode: 2,
+        output: "1 packets transmitted, 0 packets received, 100.0% packet loss"), "ICMP loss requires DNS fallback")
     let probeResponse: [UInt8] = [0, 42, 0x80, 5, 0, 1, 0, 0, 0, 0, 0, 0]
     try expect(DNSReachabilityProbe.hasDNSResponse(probeResponse, transactionID: 42), "DNS response recognized")
     try expect(!DNSReachabilityProbe.hasDNSResponse(probeResponse, transactionID: 43), "Wrong transaction rejected")

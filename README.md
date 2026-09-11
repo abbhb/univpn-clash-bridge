@@ -113,9 +113,11 @@ MIT
 
 ## DNS reachability (1.0.5)
 
-Each synchronization sends a bounded DNS query directly to every configured probe
-IP (two seconds per server). The UDP socket is bound to the VPN or physical
-interface to avoid Clash TUN DNS interception. Only responding servers are used for the domains in
+Each synchronization first checks each configured IP with ICMP using the normal
+system route for IPv4 (two seconds). If ICMP does not respond, or for IPv6, it tries a bounded UDP DNS
+query (two seconds). The DNS socket is bound to the VPN or physical interface to
+avoid Clash TUN DNS interception. An ICMP reply or a DNS reply establishes
+reachability. Only reachable servers are used for the domains in
 Script.js `internalDomains`. When none respond, their managed DNS policies are
 removed so normal DNS resolution applies. A later synchronization restores them
 when a server responds. The domain list and unrelated DNS policies are preserved.
