@@ -32,6 +32,12 @@ public struct DNSReachabilityProbe {
     }
 
     private func probe(_ server: String) throws -> Bool {
+        // Preserve working system routes (including tunnels) before testing a bound DNS socket.
+        // A DNS response through Clash alone may be intercepted; an ICMP reply proves IP reachability.
+        if !server.contains(":") {
+            let ping = try Shell.run("/sbin/ping", ["-n", "-c", "1", "-W", "2000", server])
+            if Self.hasICMPResponse(exitCode: ping.exitCode, output: ping.standardOutput) { return true }
+        }
         let name = try interface(for: server)
         var hints = addrinfo()
         hints.ai_flags = AI_NUMERICHOST
@@ -74,6 +80,11 @@ public struct DNSReachabilityProbe {
             return false
         }
         throw BridgeError.commandFailed("DNS 探测 socket 错误（errno \(code)）")
+    }
+
+    public static func hasICMPResponse(exitCode: Int32, output: String) -> Bool {
+        exitCode == 0 && output.range(of: #"\b1 packets? (?:received|transmitted, 1 packets? received)"#,
+                                    options: .regularExpression) != nil
     }
 
     public static func hasDNSResponse(_ packet: [UInt8], transactionID: UInt16) -> Bool {
