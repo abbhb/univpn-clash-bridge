@@ -18,18 +18,26 @@ public struct InterfaceDetection: Sendable, Equatable {
     }
 }
 
+public enum BridgeMode: Sendable, Equatable {
+    case vpn
+    case direct
+}
+
 public struct UpdateOutcome: Sendable, Equatable {
-    public let interface: InterfaceDetection
+    public let mode: BridgeMode
+    public let interface: InterfaceDetection?
     public let backupDirectory: String
     public let runtimeReloaded: Bool
     public let changedFileCount: Int
 
     public init(
-        interface: InterfaceDetection,
+        mode: BridgeMode,
+        interface: InterfaceDetection?,
         backupDirectory: String,
         runtimeReloaded: Bool,
         changedFileCount: Int
     ) {
+        self.mode = mode
         self.interface = interface
         self.backupDirectory = backupDirectory
         self.runtimeReloaded = runtimeReloaded
@@ -56,6 +64,7 @@ public enum BridgeError: LocalizedError, Sendable {
     case requiredFileMissing(String)
     case commandFailed(String)
     case vpnRouteMissing([String])
+    case nonVPNInterfaceDetected(String)
     case invalidVPNInterface(String)
     case clashInterfaceDetected(String)
     case invalidConfiguration(String)
@@ -74,6 +83,8 @@ public enum BridgeError: LocalizedError, Sendable {
             return "系统命令执行失败：\(message)"
         case let .vpnRouteMissing(targets):
             return "没有找到通往 VPN DNS 的隧道路由（\(targets.joined(separator: ", "))）"
+        case let .nonVPNInterfaceDetected(name):
+            return "通往 VPN DNS 的路由当前使用普通网络接口：\(name)"
         case let .invalidVPNInterface(name):
             return "路由命中了无效接口：\(name)"
         case let .clashInterfaceDetected(name):

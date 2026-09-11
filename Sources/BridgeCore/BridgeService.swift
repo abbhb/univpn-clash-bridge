@@ -5,6 +5,7 @@ public struct BridgePaths: Sendable {
     public let globalScript: URL
     public let dnsConfig: URL
     public let runtimeConfig: URL
+    public let generatedCheckConfig: URL
     public let mihomoCore: URL
     public let mihomoSocket: URL
 
@@ -30,14 +31,12 @@ public struct BridgePaths: Sendable {
             globalScript: home.appendingPathComponent("profiles/Script.js"),
             dnsConfig: home.appendingPathComponent("dns_config.yaml"),
             runtimeConfig: home.appendingPathComponent("clash-verge.yaml"),
+            generatedCheckConfig: home.appendingPathComponent("clash-verge-check.yaml"),
             mihomoCore: URL(fileURLWithPath: corePath),
             mihomoSocket: URL(fileURLWithPath: "/tmp/verge/verge-mihomo.sock")
         )
 
-        var requiredFiles = [paths.globalScript, paths.runtimeConfig]
-        if !configuration.internalDomains.isEmpty {
-            requiredFiles.append(paths.dnsConfig)
-        }
+        let requiredFiles = [paths.globalScript, paths.dnsConfig, paths.runtimeConfig]
         for file in requiredFiles {
             guard fileManager.fileExists(atPath: file.path) else {
                 throw BridgeError.requiredFileMissing(file.path)
@@ -62,34 +61,62 @@ public struct BridgeService {
     public func update() throws -> UpdateOutcome {
         let paths = try BridgePaths.current(configuration: configuration)
         let appData = try AppDataPaths.current()
-        let detected = try detect()
+        let detected = try detectVPNIfAvailable()
 
         let originalScript = try String(contentsOf: paths.globalScript, encoding: .utf8)
+        let originalDNS = try String(contentsOf: paths.dnsConfig, encoding: .utf8)
         let originalRuntime = try String(contentsOf: paths.runtimeConfig, encoding: .utf8)
+        let generatedCheckConfig = try? String(contentsOf: paths.generatedCheckConfig, encoding: .utf8)
+        let internalDNSDomains = try ConfigTransformer.discoverInternalDomains(in: originalScript)
+        let legacyVPNRouteDomains = try ConfigTransformer.discoverLegacyVPNRouteDomains(in: originalScript)
+        let previousVPNRouteDomains = try ConfigTransformer.discoverManagedVPNRouteDomains(in: originalScript)
+        let vpnRouteDomains = configuration.vpnRouteDomains
 
-        let updatedScript = try ConfigTransformer.updateGlobalScript(
-            originalScript,
-            interface: detected.name,
-            internalDomains: configuration.internalDomains
-        )
-        let updatedRuntime = try ConfigTransformer.updateRuntimeConfig(
-            originalRuntime,
-            interface: detected.name,
-            dnsServers: configuration.dnsServers,
-            internalDomains: configuration.internalDomains
-        )
-        var updates = [
-            FileUpdate(url: paths.globalScript, original: originalScript, updated: updatedScript),
-        ]
-        if !configuration.internalDomains.isEmpty {
-            let originalDNS = try String(contentsOf: paths.dnsConfig, encoding: .utf8)
-            let updatedDNS = try ConfigTransformer.updateDNSConfig(
+        let mode: BridgeMode = detected == nil ? .direct : .vpn
+        let updatedScript: String
+        let updatedDNS: String
+        let updatedRuntime: String
+        if let detected {
+            updatedScript = try ConfigTransformer.updateGlobalScript(
+                originalScript,
+                interface: detected.name,
+                vpnRouteDomains: vpnRouteDomains
+            )
+            updatedDNS = try ConfigTransformer.updateDNSConfig(
                 originalDNS,
                 dnsServers: configuration.dnsServers,
-                internalDomains: configuration.internalDomains
+                internalDNSDomains: internalDNSDomains
             )
-            updates.append(FileUpdate(url: paths.dnsConfig, original: originalDNS, updated: updatedDNS))
+            updatedRuntime = try ConfigTransformer.updateRuntimeConfig(
+                originalRuntime,
+                interface: detected.name,
+                dnsServers: configuration.dnsServers,
+                internalDNSDomains: internalDNSDomains,
+                vpnRouteDomains: vpnRouteDomains,
+                routeRecoverySource: generatedCheckConfig,
+                legacyVPNRouteDomains: legacyVPNRouteDomains,
+                previousVPNRouteDomains: previousVPNRouteDomains
+            )
+        } else {
+            updatedScript = try ConfigTransformer.restoreGlobalScript(originalScript)
+            updatedDNS = try ConfigTransformer.restoreDNSConfig(
+                originalDNS,
+                dnsServers: configuration.dnsServers,
+                internalDNSDomains: internalDNSDomains
+            )
+            updatedRuntime = try ConfigTransformer.restoreRuntimeConfig(
+                originalRuntime,
+                dnsServers: configuration.dnsServers,
+                internalDNSDomains: internalDNSDomains,
+                routeRecoverySource: generatedCheckConfig,
+                legacyVPNRouteDomains: legacyVPNRouteDomains,
+                previousVPNRouteDomains: previousVPNRouteDomains
+            )
         }
+        var updates = [
+            FileUpdate(url: paths.globalScript, original: originalScript, updated: updatedScript),
+            FileUpdate(url: paths.dnsConfig, original: originalDNS, updated: updatedDNS),
+        ]
         updates.append(FileUpdate(url: paths.runtimeConfig, original: originalRuntime, updated: updatedRuntime))
 
         let changedUpdates = updates.filter(\.hasChanges)
@@ -110,6 +137,7 @@ public struct BridgeService {
             }
 
             return UpdateOutcome(
+                mode: mode,
                 interface: detected,
                 backupDirectory: backupDirectory.path,
                 runtimeReloaded: reloaded,
@@ -124,6 +152,19 @@ public struct BridgeService {
                 try? reload(runtimeConfig: paths.runtimeConfig, socket: paths.mihomoSocket)
             }
             throw error
+        }
+    }
+
+    private func detectVPNIfAvailable() throws -> InterfaceDetection? {
+        do {
+            return try detect()
+        } catch let error as BridgeError {
+            switch error {
+            case .clashInterfaceDetected(_), .vpnRouteMissing(_), .nonVPNInterfaceDetected(_):
+                return nil
+            default:
+                throw error
+            }
         }
     }
 

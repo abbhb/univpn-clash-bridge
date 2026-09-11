@@ -4,22 +4,51 @@ import Network
 public struct AppConfiguration: Codable, Sendable, Equatable {
     public var schemaVersion: Int
     public var dnsServers: [String]
-    public var internalDomains: [String]
+    public var vpnRouteDomains: [String]
     public var clashConfigDirectory: String
     public var dnsGuardEnabled: Bool
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         dnsServers: [String],
-        internalDomains: [String],
+        vpnRouteDomains: [String],
         clashConfigDirectory: String,
         dnsGuardEnabled: Bool = true
     ) {
         self.schemaVersion = schemaVersion
         self.dnsServers = dnsServers
-        self.internalDomains = internalDomains
+        self.vpnRouteDomains = vpnRouteDomains
         self.clashConfigDirectory = clashConfigDirectory
         self.dnsGuardEnabled = dnsGuardEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case dnsServers
+        case vpnRouteDomains
+        case internalDomains
+        case clashConfigDirectory
+        case dnsGuardEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        dnsServers = try container.decode([String].self, forKey: .dnsServers)
+        vpnRouteDomains = try container.decodeIfPresent([String].self, forKey: .vpnRouteDomains)
+            ?? container.decodeIfPresent([String].self, forKey: .internalDomains)
+            ?? []
+        clashConfigDirectory = try container.decode(String.self, forKey: .clashConfigDirectory)
+        dnsGuardEnabled = try container.decodeIfPresent(Bool.self, forKey: .dnsGuardEnabled) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(2, forKey: .schemaVersion)
+        try container.encode(dnsServers, forKey: .dnsServers)
+        try container.encode(vpnRouteDomains, forKey: .vpnRouteDomains)
+        try container.encode(clashConfigDirectory, forKey: .clashConfigDirectory)
+        try container.encode(dnsGuardEnabled, forKey: .dnsGuardEnabled)
     }
 
     public static func suggestedClashConfigDirectory(fileManager: FileManager = .default) -> String {
@@ -39,7 +68,7 @@ public struct AppConfiguration: Codable, Sendable, Equatable {
             throw BridgeError.invalidConfiguration("至少需要一个 VPN DNS / 探测 IP")
         }
 
-        let nonemptyDomains = internalDomains.map(normalizeScalar).filter { !$0.isEmpty }
+        let nonemptyDomains = vpnRouteDomains.map(normalizeScalar).filter { !$0.isEmpty }
         let normalizedDomains = try unique(nonemptyDomains.map(normalizeDomain))
 
         let expandedPath = NSString(string: normalizeScalar(clashConfigDirectory)).expandingTildeInPath
@@ -49,9 +78,9 @@ public struct AppConfiguration: Codable, Sendable, Equatable {
         }
 
         return AppConfiguration(
-            schemaVersion: 1,
+            schemaVersion: 2,
             dnsServers: normalizedDNS,
-            internalDomains: normalizedDomains,
+            vpnRouteDomains: normalizedDomains,
             clashConfigDirectory: URL(fileURLWithPath: expandedPath).standardizedFileURL.path,
             dnsGuardEnabled: dnsGuardEnabled
         )
@@ -131,7 +160,12 @@ public struct ConfigurationStore {
         let paths = try AppDataPaths.current(fileManager: fileManager)
         guard fileManager.fileExists(atPath: paths.configuration.path) else { return nil }
         let data = try Data(contentsOf: paths.configuration)
-        return try JSONDecoder().decode(AppConfiguration.self, from: data).normalized(fileManager: fileManager)
+        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: data)
+        let normalized = try decoded.normalized(fileManager: fileManager)
+        if decoded.schemaVersion < 2 {
+            return try save(normalized)
+        }
+        return normalized
     }
 
     @discardableResult
