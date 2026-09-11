@@ -1,5 +1,6 @@
 import BridgeCore
 import Foundation
+import JavaScriptCore
 
 private enum SelfTestError: Error {
     case failed(String)
@@ -736,6 +737,72 @@ do {
             previousVPNRouteDomains: previousVPNRouteDomains
         ).write(to: outputDirectory.appendingPathComponent("clash-verge.yaml"), atomically: true, encoding: .utf8)
         print("Private DIRECT integration output written outside the repository")
+    }
+
+    if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--probe-dns" {
+        let available = try DNSReachabilityProbe().availableServers(Array(CommandLine.arguments.dropFirst(2)))
+        print("Responding DNS servers: " + available.joined(separator: ", "))
+    }
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--dns-snapshot" {
+        let source = URL(fileURLWithPath: CommandLine.arguments[2])
+        let destination = URL(fileURLWithPath: CommandLine.arguments[3])
+        let script = try String(contentsOf: source.appendingPathComponent("profiles/Script.js"), encoding: .utf8)
+        let domains = try ConfigTransformer.discoverInternalDomains(in: script)
+        for (mode, servers) in [("public", [String]()), ("internal", ["192.0.2.53"])] {
+            let directory = destination.appendingPathComponent(mode)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for name in ["dns_config.yaml", "clash-verge.yaml"] {
+                let original = try String(contentsOf: source.appendingPathComponent(name), encoding: .utf8)
+                let transformed = try ConfigTransformer.synchronizeDNSPolicy(original, servers: servers, domains: domains, outbound: "DIRECT")
+                try transformed.write(to: directory.appendingPathComponent(name), atomically: true, encoding: .utf8)
+            }
+            let transformed = try ConfigTransformer.synchronizeDNSScript(script, servers: servers, domains: domains, outbound: "DIRECT")
+            try transformed.write(to: directory.appendingPathComponent("Script.js"), atomically: true, encoding: .utf8)
+        }
+    }
+    let probeResponse: [UInt8] = [0, 42, 0x80, 5, 0, 1, 0, 0, 0, 0, 0, 0]
+    try expect(DNSReachabilityProbe.hasDNSResponse(probeResponse, transactionID: 42), "DNS response recognized")
+    try expect(!DNSReachabilityProbe.hasDNSResponse(probeResponse, transactionID: 43), "Wrong transaction rejected")
+    try expect(!DNSReachabilityProbe.hasDNSResponse([], transactionID: 42), "Empty response rejected")
+    let dnsFixture = """
+    dns:
+      nameserver:
+        - https://dns.example/dns-query
+      nameserver-policy:
+        +.corp.example:
+          - 'udp://192.0.2.53#DIRECT'
+        +.other.example:
+          - 'https://other.example/dns-query'
+    """
+    let publicDNS = try ConfigTransformer.synchronizeDNSPolicy(dnsFixture, servers: [], domains: ["corp.example"], outbound: "DIRECT")
+    try expect(!publicDNS.contains("+.corp.example:"), "Public mode removes managed DNS")
+    try expect(publicDNS.contains("+.other.example:") && publicDNS.contains("https://dns.example/dns-query"), "Other policies and resolvers retained")
+    let recoveredDNS = try ConfigTransformer.synchronizeDNSPolicy(publicDNS, servers: ["192.0.2.54"], domains: ["corp.example"], outbound: "DIRECT")
+    try expect(recoveredDNS.contains("udp://192.0.2.54#DIRECT") && !recoveredDNS.contains("192.0.2.53"), "Only available DNS restored")
+    let publicAgain = try ConfigTransformer.synchronizeDNSPolicy(recoveredDNS, servers: [], domains: ["corp.example"], outbound: "DIRECT")
+    try expect(publicAgain == publicDNS, "DNS roundtrip stable")
+    var reachabilityScript = """
+    const internalDomains = ["corp.example"];
+    function main(config) {
+      config.dns = {"nameserver-policy": {"+.corp.example": ["old"], "+.other.example": ["keep"]}};
+      return config;
+    }
+    """
+    for servers: [String] in [[], ["192.0.2.54"], [], ["192.0.2.53", "192.0.2.54"]] {
+        if servers.isEmpty {
+            reachabilityScript = try ConfigTransformer.restoreGlobalScript(reachabilityScript)
+        } else {
+            reachabilityScript = try ConfigTransformer.updateGlobalScript(reachabilityScript, interface: "utun9", vpnRouteDomains: [])
+        }
+        reachabilityScript = try ConfigTransformer.synchronizeDNSScript(reachabilityScript, servers: servers, domains: ["corp.example"], outbound: "UNIVPN-DIRECT")
+        let context = JSContext()!
+        context.evaluateScript(reachabilityScript)
+        let value = context.evaluateScript("JSON.stringify(main({}))")?.toString() ?? ""
+        try expect(context.exception == nil, "Repeated script regeneration executes without recursion")
+        try expect(value.contains("keep"), "Script retains unrelated DNS policy")
+        try expect(value.contains("+.corp.example") == !servers.isEmpty, "Script enforces reachability after original main")
+        let savedDomains = try ConfigTransformer.discoverInternalDomains(in: reachabilityScript)
+        try expect(savedDomains == ["corp.example"], "Domain manifest retained")
     }
 
     print("BridgeCore self-test passed")

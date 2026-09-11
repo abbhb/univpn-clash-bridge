@@ -110,3 +110,16 @@ Product names and marks belong to their respective owners.
 ## License
 
 MIT
+
+## DNS reachability (1.0.5)
+
+Each synchronization sends a bounded DNS query directly to every configured probe
+IP (two seconds per server). The UDP socket is bound to the VPN or physical
+interface to avoid Clash TUN DNS interception. Only responding servers are used for the domains in
+Script.js `internalDomains`. When none respond, their managed DNS policies are
+removed so normal DNS resolution applies. A later synchronization restores them
+when a server responds. The domain list and unrelated DNS policies are preserved.
+This DNS decision is independent of VPN interface detection: company LAN can use
+DIRECT with internal DNS, while an unreachable VPN DNS can use normal resolution.
+A final script wrapper preserves the same decision when Clash regenerates its
+configuration. Changes retain the existing backup, validation and rollback flow.
