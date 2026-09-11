@@ -4,13 +4,13 @@ import SwiftUI
 
 private struct ConfigurationDraft: Sendable {
     var dnsText: String
-    var domainsText: String
+    var vpnRouteDomainsText: String
     var clashDirectory: String
     var dnsGuardEnabled: Bool
 
     init(configuration: AppConfiguration?) {
         dnsText = configuration?.dnsServers.joined(separator: "\n") ?? ""
-        domainsText = configuration?.internalDomains.joined(separator: "\n") ?? ""
+        vpnRouteDomainsText = configuration?.vpnRouteDomains.joined(separator: "\n") ?? ""
         clashDirectory = configuration?.clashConfigDirectory
             ?? AppConfiguration.suggestedClashConfigDirectory()
         dnsGuardEnabled = configuration?.dnsGuardEnabled ?? true
@@ -19,7 +19,7 @@ private struct ConfigurationDraft: Sendable {
     func makeConfiguration() -> AppConfiguration {
         AppConfiguration(
             dnsServers: splitValues(dnsText),
-            internalDomains: splitValues(domainsText),
+            vpnRouteDomains: splitValues(vpnRouteDomainsText),
             clashConfigDirectory: clashDirectory,
             dnsGuardEnabled: dnsGuardEnabled
         )
@@ -73,7 +73,7 @@ final class AppModel: ObservableObject {
             configuration = try ConfigurationStore().load()
             if let configuration {
                 _ = try? ConfigurationStore().migrateLegacyBackups(for: configuration)
-                statusMessage = "请先连接 VPN"
+                statusMessage = "连接或关闭 VPN 后，点击检测并更新"
                 dnsGuardStatus = DNSGuardManager().status()
             } else {
                 statusMessage = "首次使用需要完成配置"
@@ -154,7 +154,7 @@ final class AppModel: ObservableObject {
         guard !isBusy, let configuration else { return }
         isBusy = true
         statusKind = .idle
-        statusMessage = "正在检测 VPN DNS 路由..."
+        statusMessage = "正在检测并同步网络模式..."
 
         Task {
             let result = await Task.detached(priority: .userInitiated) {
@@ -168,17 +168,33 @@ final class AppModel: ObservableObject {
 
             isBusy = false
             if let outcome = result.outcome {
-                interfaceName = outcome.interface.name
-                interfaceAddresses = outcome.interface.addresses.isEmpty
-                    ? "无可见 IP 地址"
-                    : outcome.interface.addresses.joined(separator: ", ")
-                statusKind = .success
-                if outcome.changedFileCount == 0 {
-                    statusMessage = "VPN 出口配置已是最新"
+                if let interface = outcome.interface {
+                    interfaceName = interface.name
+                    interfaceAddresses = interface.addresses.isEmpty
+                        ? "无可见 IP 地址"
+                        : interface.addresses.joined(separator: ", ")
                 } else {
-                    statusMessage = outcome.runtimeReloaded
-                        ? "全局配置已更新，Mihomo 已热重载"
-                        : "全局配置已更新；Clash Verge 启动后自动生效"
+                    interfaceName = "DIRECT"
+                    interfaceAddresses = "未连接 VPN"
+                }
+                statusKind = .success
+                switch outcome.mode {
+                case .vpn:
+                    if outcome.changedFileCount == 0 {
+                        statusMessage = "VPN 出口配置已是最新"
+                    } else {
+                        statusMessage = outcome.runtimeReloaded
+                            ? "已切换到 VPN 出口，Mihomo 已热重载"
+                            : "已切换到 VPN 出口；Clash Verge 启动后自动生效"
+                    }
+                case .direct:
+                    if outcome.changedFileCount == 0 {
+                        statusMessage = "DIRECT 配置已是最新"
+                    } else {
+                        statusMessage = outcome.runtimeReloaded
+                            ? "已恢复 DIRECT 配置，Mihomo 已热重载"
+                            : "已恢复 DIRECT 配置；Clash Verge 启动后自动生效"
+                    }
                 }
             } else {
                 statusKind = .failure
@@ -278,7 +294,7 @@ private struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("UniVPN Clash Bridge")
                         .font(.title2.weight(.semibold))
-                    Text("VPN 出口同步")
+                    Text("VPN / DIRECT 双态同步")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -370,7 +386,7 @@ private struct DashboardView: View {
                 .controlSize(.large)
                 .disabled(model.isBusy)
                 .keyboardShortcut(.defaultAction)
-                .help("探测 VPN 接口并同步 Clash Verge 全局配置")
+                .help("检测 VPN 状态并在 VPN / DIRECT 配置间同步")
             }
         }
         .padding(22)
@@ -378,8 +394,8 @@ private struct DashboardView: View {
     }
 
     private var routingScope: String {
-        let count = model.configuration?.internalDomains.count ?? 0
-        return count == 0 ? "仅维护 VPN 出口" : "\(count) 个域名后缀"
+        let count = model.configuration?.vpnRouteDomains.count ?? 0
+        return count == 0 ? "未配置强制 VPN 分流" : "\(count) 个域名后缀强制走 VPN"
     }
 }
 
@@ -418,20 +434,20 @@ private struct ConfigurationEditor: View {
                     .padding(5)
                     .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                Text("每行一个地址；用于识别 VPN 接口，托管域名时也用于内网 DNS。")
+                Text("每行一个地址；用于识别 VPN 接口，并供 Clash 脚本 internalDomains 查询内网 DNS。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("内网域名后缀（可选）").font(.headline)
-                TextEditor(text: $draft.domainsText)
+                Text("强制走 VPN 的域名后缀（可选）").font(.headline)
+                TextEditor(text: $draft.vpnRouteDomainsText)
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 92)
                     .padding(5)
                     .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                Text("留空时不修改 Clash 的域名规则和 DNS 分流。")
+                Text("这里只控制业务连接是否走 UNIVPN-DIRECT；Clash 脚本的 internalDomains 只控制内网 DNS。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
