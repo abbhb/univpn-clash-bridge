@@ -341,9 +341,20 @@ public enum ConfigTransformer {
         }
         try removeManagedDNSPolicyBlock(&lines)
         if let start = lines.firstIndex(where: {
-            $0.trimmingCharacters(in: .whitespaces) == "nameserver-policy:"
+            mappingKey(from: $0) == "nameserver-policy"
         }) {
             let baseIndent = indentation(of: lines[start])
+            // Clash serializes an empty block as null (or {}). Reuse its key instead of appending another.
+            let declaration = lines[start]
+            let colon = declaration.firstIndex(of: ":")!
+            let value = declaration[declaration.index(after: colon)...]
+                .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                .trimmingCharacters(in: .whitespaces)
+            guard value.isEmpty || ["null", "Null", "NULL", "~"].contains(value)
+                    || value.range(of: #"^\{\s*\}$"#, options: .regularExpression) != nil else {
+                throw BridgeError.unsupportedConfig("nameserver-policy 包含暂不支持的行内值，未修改配置")
+            }
+            lines[start] = String(repeating: " ", count: baseIndent) + "nameserver-policy:"
             var end = sectionEnd(lines, start: start, baseIndent: baseIndent)
             let managedDomains = Set(internalDNSDomains.map { "+." + $0 })
             var index = start + 1

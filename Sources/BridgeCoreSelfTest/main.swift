@@ -764,6 +764,30 @@ do {
     try expect(DNSReachabilityProbe.hasDNSResponse(probeResponse, transactionID: 42), "DNS response recognized")
     try expect(!DNSReachabilityProbe.hasDNSResponse(probeResponse, transactionID: 43), "Wrong transaction rejected")
     try expect(!DNSReachabilityProbe.hasDNSResponse([], transactionID: 42), "Empty response rejected")
+    for emptyValue in ["", "null", "Null", "NULL", "~", "{}", "{ }", "null # saved by Clash"] {
+        let emptyPolicy = "dns:\n  nameserver-policy: \(emptyValue)\n  enable: true\n"
+        let restored = try ConfigTransformer.synchronizeDNSPolicy(emptyPolicy,
+            servers: ["192.0.2.53"], domains: ["corp.example"], outbound: "UNIVPN-DIRECT")
+        try expect(restored.components(separatedBy: "nameserver-policy:").count == 2,
+            "Empty policy is reused without duplicate key: \(emptyValue)")
+        try expect(restored.contains("udp://192.0.2.53#UNIVPN-DIRECT"), "VPN DNS restored")
+        try expect(restored.contains("  enable: true"), "Sibling DNS settings preserved")
+        let again = try ConfigTransformer.synchronizeDNSPolicy(restored,
+            servers: ["192.0.2.53"], domains: ["corp.example"], outbound: "UNIVPN-DIRECT")
+        try expect(again == restored, "Restoration is idempotent")
+        let cleared = try ConfigTransformer.synchronizeDNSPolicy(restored,
+            servers: [], domains: ["corp.example"], outbound: "DIRECT")
+        let serialized = cleared.replacingOccurrences(of: "nameserver-policy:\n", with: "nameserver-policy: null\n")
+        let roundtrip = try ConfigTransformer.synchronizeDNSPolicy(serialized,
+            servers: ["192.0.2.53"], domains: ["corp.example"], outbound: "UNIVPN-DIRECT")
+        try expect(roundtrip == restored, "Public to Clash serialization to VPN roundtrip")
+    }
+    do {
+        _ = try ConfigTransformer.synchronizeDNSPolicy("dns:\n  nameserver-policy: {example: custom}\n",
+            servers: ["192.0.2.53"], domains: ["corp.example"], outbound: "DIRECT")
+        throw SelfTestError.failed("Nonempty inline policy must not be overwritten")
+    } catch BridgeError.unsupportedConfig { }
+
     let dnsFixture = """
     dns:
       nameserver:
